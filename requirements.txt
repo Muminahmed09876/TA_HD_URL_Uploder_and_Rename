@@ -1,7 +1,4 @@
-pyrogram==2.0.38
-tgcrypto
-pillow
-hachoir
-fastapi
-uvicorn[standard]
-aiohttp
+pyrogram==2.0.106
+aiohttp==3.8.5
+hachoir==3.1.3
+Pillow==10.0.0
