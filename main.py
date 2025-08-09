@@ -1,26 +1,21 @@
 import re
 import os
-import sys
-import threading
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from pyrogram import Client, filters
+
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message, BotCommand
 from PIL import Image
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
+from aiohttp import web, TCPConnector, ClientSession, ClientTimeout
 
-import aiohttp
-from aiohttp import TCPConnector
+API_ID = int(os.environ.get("API_ID", "26682163"))
+API_HASH = os.environ.get("API_HASH", "a8f99ba7a23a64b6512aed95fb8a5885")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8410395478:AAHpzWKItO5-RegWPrb-yi019Re0vQNQqQ8")
 
-from fastapi import FastAPI
-import uvicorn
-
-API_ID = int(os.environ.get("API_ID", 0))
-API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "6473423613"))  # অ্যাডমিন আইডি
 
 BASE_DIR = Path(__file__).parent.resolve()
 TMP = BASE_DIR / "tmp"
@@ -29,13 +24,10 @@ TMP.mkdir(parents=True, exist_ok=True)
 USER_THUMBS = {}
 LAST_FILE = {}
 
-MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2GB max
+MAX_DOWNLOAD_BYTES = 2048 * 1024 * 1024  # 2GB max
 
 app = Client("mybot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-web_app = FastAPI()
 
-
-# Utility functions
 
 def is_drive_url(url: str) -> bool:
     return "drive.google.com" in url
@@ -115,11 +107,11 @@ async def download_stream(resp, out_path: Path, message: Message = None, start_t
 
 async def download_url_generic(url: str, out_path: Path, message: Message = None):
     try:
-        timeout = aiohttp.ClientTimeout(total=3600)
+        timeout = ClientTimeout(total=3600)
         headers = {"User-Agent": "Mozilla/5.0"}
         connector = TCPConnector(limit=0, ttl_dns_cache=300)
         start_time = datetime.now()
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as sess:
+        async with ClientSession(timeout=timeout, headers=headers, connector=connector) as sess:
             async with sess.get(url, allow_redirects=True) as resp:
                 if resp.status != 200:
                     return False, f"HTTP {resp.status}"
@@ -131,11 +123,11 @@ async def download_url_generic(url: str, out_path: Path, message: Message = None
 async def download_drive_file(file_id: str, out_path: Path, message: Message = None):
     base = f"https://drive.google.com/uc?export=download&id={file_id}"
     try:
-        timeout = aiohttp.ClientTimeout(total=3600)
+        timeout = ClientTimeout(total=3600)
         headers = {"User-Agent": "Mozilla/5.0"}
         connector = TCPConnector(limit=0, ttl_dns_cache=300)
         start_time = datetime.now()
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers, connector=connector) as sess:
+        async with ClientSession(timeout=timeout, headers=headers, connector=connector) as sess:
             async with sess.get(base, allow_redirects=True) as resp:
                 text = await resp.text(errors="ignore")
                 if "content-disposition" in (k.lower() for k in resp.headers.keys()):
@@ -184,7 +176,6 @@ async def set_bot_commands():
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_handler(c, m: Message):
-    print(f"Start command from {m.from_user.id}")
     await set_bot_commands()
     text = (
         "Hi! আমি URL uploader bot.\n\n"
@@ -422,18 +413,15 @@ async def rename_cmd(c, m: Message):
         TMP.mkdir(parents=True, exist_ok=True)
         tmp_file = TMP / f"rename_{uid}_{int(datetime.now().timestamp())}_{newname}"
 
-        status_msg = await m.reply_text("রিনেম ভিডিও ডাউনলোড হচ্ছে...")
+        # ডাউনলোড ভিডিও
+        await replied.download(file_name=str(tmp_file))
+
+        # ভিডিও ডিউরেশন
+        duration_sec = get_video_duration(tmp_file)
+
+        status_msg = await m.reply_text("রিনেম করা ভিডিও Telegram-এ আপলোড হচ্ছে...")
         start_time = datetime.now()
 
-        await c.download_media(
-            message=replied,
-            file_name=str(tmp_file),
-            progress=progress_callback,
-            progress_args=(status_msg, start_time, "Downloading")
-        )
-
-        await status_msg.edit("রিনেম ভিডিও আপলোড শুরু হচ্ছে...")
-        duration_sec = get_video_duration(tmp_file)
         await c.send_video(
             chat_id=m.chat.id,
             video=str(tmp_file),
@@ -443,44 +431,52 @@ async def rename_cmd(c, m: Message):
             progress=upload_progress,
             progress_args=(status_msg, start_time)
         )
-        await status_msg.edit("রিনেম ভিডিও আপলোড সম্পন্ন।")
-
-        if tmp_file.exists():
-            tmp_file.unlink()
+        await status_msg.edit("রিনেম করা ভিডিও আপলোড সম্পন্ন।")
     except Exception as e:
-        await m.reply_text(f"রিনেম ভিডিওতে ত্রুটি: {e}")
+        await m.reply_text(f"রিনেমে ত্রুটি: {e}")
 
 
-@app.on_message(filters.command("broadcast") & filters.user(ADMIN_ID))
+@app.on_message(filters.command("broadcast") & filters.private & filters.user(ADMIN_ID))
 async def broadcast_cmd(c, m: Message):
-    text = m.text.split(None, 1)
-    if len(text) < 2:
-        await m.reply_text("ব্রডকাস্টের জন্য /broadcast <text> ব্যবহার করুন।")
+    if len(m.command) < 2:
+        await m.reply_text("ব্যবহার: /broadcast <message>")
         return
-    msg = text[1]
-
+    text = m.text.split(None, 1)[1].strip()
     count = 0
-    async for dialog in c.get_dialogs():
-        chat_id = dialog.chat.id
+    failed = 0
+    async for dialog in c.iter_dialogs():
         try:
-            await c.send_message(chat_id, msg)
+            await c.send_message(dialog.chat.id, text)
             count += 1
+            await asyncio.sleep(0.05)
         except Exception:
-            pass
-    await m.reply_text(f"ব্রডকাস্ট সম্পন্ন। মোট পাঠানো: {count} টি চ্যাট।")
+            failed += 1
+    await m.reply_text(f"Broadcast সম্পন্ন। সফল: {count}, ব্যর্থ: {failed}")
 
 
-# FastAPI route example
-@web_app.get("/")
-async def root():
-    return {"status": "Bot is running!"}
+# ওয়েব সার্ভার অংশ
+
+async def web_handler(request):
+    return web.Response(text="Bot is running! (Pyrogram + aiohttp)")
+
+async def run_webserver():
+    port = int(os.environ.get("PORT", 8080))
+    app_web = web.Application()
+    app_web.router.add_get("/", web_handler)
+    runner = web.AppRunner(app_web)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server running on port {port}")
 
 
-def start_fastapi():
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(web_app, host="0.0.0.0", port=port)
+async def main():
+    await app.start()
+    print("Bot started")
+    await run_webserver()
+    await idle()
+    await app.stop()
 
 
 if __name__ == "__main__":
-    threading.Thread(target=start_fastapi).start()
-    app.run()
+    asyncio.run(main())
