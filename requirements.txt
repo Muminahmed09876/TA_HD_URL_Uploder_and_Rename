@@ -1,7 +1,7 @@
-pyrogram
+pyrogram==2.0.38
 tgcrypto
-aiohttp
 pillow
 hachoir
 fastapi
 uvicorn[standard]
+aiohttp
