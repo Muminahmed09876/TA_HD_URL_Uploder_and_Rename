@@ -424,4 +424,69 @@ async def rename_cmd(c, m: Message):
         return
 
     if len(m.command) < 2:
-       
+        await m.reply_text("ব্যবহার: /rename <new_filename.ext>")
+        return
+
+    new_name = m.text.split(None, 1)[1].strip()
+    if not re.match(r"^[\w\s\-\.,]+\.\w{2,5}$", new_name):
+        await m.reply_text("সঠিক নাম দিন (উদাহরণ: video_new.mp4)")
+        return
+
+    status_msg = await m.reply_text("ভিডিও ডাউনলোড হচ্ছে...")
+    uid = m.from_user.id
+    tmp_in = TMP / f"rename_{uid}_{int(datetime.now().timestamp())}_{new_name}"
+    await replied.download(file_name=str(tmp_in))
+
+    await status_msg.edit("ডাউনলোড সম্পন্ন — Telegram-এ আপলোড হচ্ছে...")
+    thumb_path = USER_THUMBS.get(uid)
+    is_video = True
+
+    duration_sec = get_video_duration(tmp_in)
+    if not thumb_path or not Path(thumb_path).exists():
+        thumb_path_tmp = TMP / f"thumb_{uid}_{int(datetime.now().timestamp())}.jpg"
+        ok = await generate_video_thumbnail(tmp_in, thumb_path_tmp)
+        if ok:
+            thumb_path = str(thumb_path_tmp)
+
+    try:
+        await c.send_video(
+            chat_id=m.chat.id,
+            video=str(tmp_in),
+            caption=new_name,
+            thumb=thumb_path,
+            duration=duration_sec
+        )
+        await status_msg.edit("রিনেম সম্পন্ন।")
+    except Exception as e:
+        await m.reply_text(f"আপলোডে ত্রুটি: {e}")
+
+
+@app.on_message(filters.command("broadcast") & filters.user(ADMIN_ID) & filters.private)
+async def broadcast_cmd(c, m: Message):
+    if len(m.command) < 2:
+        await m.reply_text("ব্যবহার: /broadcast <মেসেজ>")
+        return
+    text = m.text.split(None, 1)[1]
+    count = 0
+    async for dialog in app.get_dialogs():
+        chat = dialog.chat
+        try:
+            await app.send_message(chat.id, text)
+            count += 1
+        except Exception:
+            continue
+    await m.reply_text(f"ব্রডকাস্ট সম্পন্ন। মোট পাঠানো হয়েছে: {count} টি চ্যাট।")
+
+
+@app.on_message(filters.command("ping") & filters.private)
+async def ping_cmd(c, m: Message):
+    start = datetime.now()
+    await m.reply_text("Pong!")
+    end = datetime.now()
+    delta = (end - start).total_seconds() * 1000
+    await m.reply_text(f"Response time: {delta:.2f} ms")
+
+
+if __name__ == "__main__":
+    print("Bot starting...")
+    app.run()
