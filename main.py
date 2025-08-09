@@ -1,6 +1,7 @@
 import re
-import aiohttp
-from aiohttp import TCPConnector
+import os
+import sys
+import threading
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -9,12 +10,12 @@ from pyrogram.types import Message, BotCommand
 from PIL import Image
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
-import os
 
-# নতুন যোগ - FastAPI ওয়েব সার্ভার
+import aiohttp
+from aiohttp import TCPConnector
+
 from fastapi import FastAPI
 import uvicorn
-import threading
 
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
@@ -28,19 +29,17 @@ TMP.mkdir(parents=True, exist_ok=True)
 USER_THUMBS = {}
 LAST_FILE = {}
 
-MAX_DOWNLOAD_BYTES = 2048 * 1024 * 1024  # 2GB max
+MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2GB max
 
 app = Client("mybot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# FastAPI অ্যাপ
 web_app = FastAPI()
 
-@web_app.get("/")
-async def root():
-    return {"status": "Bot is running"}
+
+# Utility functions
 
 def is_drive_url(url: str) -> bool:
     return "drive.google.com" in url
+
 
 def extract_drive_id(url: str) -> str:
     patterns = [r"/d/([a-zA-Z0-9_-]+)", r"id=([a-zA-Z0-9_-]+)", r"file/d/([a-zA-Z0-9_-]+)"]
@@ -49,6 +48,7 @@ def extract_drive_id(url: str) -> str:
         if m:
             return m.group(1)
     return None
+
 
 def get_video_duration(file_path: Path) -> int:
     try:
@@ -65,6 +65,7 @@ def get_video_duration(file_path: Path) -> int:
     except Exception as e:
         print(f"Error getting duration: {e}")
     return 0
+
 
 async def progress_callback(current, total, message: Message, start_time, task="Downloading"):
     now = datetime.now()
@@ -94,6 +95,7 @@ async def progress_callback(current, total, message: Message, start_time, task="
     except Exception:
         pass
 
+
 async def download_stream(resp, out_path: Path, message: Message = None, start_time=None, task="Downloading"):
     total = 0
     size = int(resp.headers.get("Content-Length", 0))
@@ -110,6 +112,7 @@ async def download_stream(resp, out_path: Path, message: Message = None, start_t
                 await progress_callback(total, size, message, start_time, task=task)
     return True, None
 
+
 async def download_url_generic(url: str, out_path: Path, message: Message = None):
     try:
         timeout = aiohttp.ClientTimeout(total=3600)
@@ -123,6 +126,7 @@ async def download_url_generic(url: str, out_path: Path, message: Message = None
                 return await download_stream(resp, out_path, message, start_time)
     except Exception as e:
         return False, str(e)
+
 
 async def download_drive_file(file_id: str, out_path: Path, message: Message = None):
     base = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -160,6 +164,7 @@ async def download_drive_file(file_id: str, out_path: Path, message: Message = N
     except Exception as e:
         return False, str(e)
 
+
 async def set_bot_commands():
     cmds = [
         BotCommand("start", "বট চালু/হেল্প"),
@@ -176,8 +181,10 @@ async def set_bot_commands():
     except Exception as e:
         print("Set commands error:", e)
 
+
 @app.on_message(filters.command("start") & filters.private)
 async def start_handler(c, m: Message):
+    print(f"Start command from {m.from_user.id}")
     await set_bot_commands()
     text = (
         "Hi! আমি URL uploader bot.\n\n"
@@ -192,13 +199,16 @@ async def start_handler(c, m: Message):
     )
     await m.reply_text(text)
 
+
 @app.on_message(filters.command("help") & filters.private)
 async def help_handler(c, m):
     await start_handler(c, m)
 
+
 @app.on_message(filters.command("setthumb") & filters.private)
 async def setthumb_prompt(c, m):
     await m.reply_text("একটি ছবি পাঠান (photo) — সেট হবে আপনার থাম্বনেইল।")
+
 
 @app.on_message(filters.photo & filters.private)
 async def photo_handler(c, m: Message):
@@ -223,6 +233,7 @@ async def photo_handler(c, m: Message):
     except Exception as e:
         await m.reply_text(f"থাম্বনেইল সেট করতে সমস্যা হয়েছে: {e}")
 
+
 @app.on_message(filters.command("view_thumb") & filters.private)
 async def view_thumb_cmd(c, m: Message):
     uid = m.from_user.id
@@ -231,6 +242,7 @@ async def view_thumb_cmd(c, m: Message):
         await c.send_photo(chat_id=m.chat.id, photo=thumb_path, caption="এটা আপনার সেভ করা থাম্বনেইল।")
     else:
         await m.reply_text("আপনার কোনো থাম্বনেইল সেভ করা নেই। /setthumb দিয়ে সেট করুন।")
+
 
 @app.on_message(filters.command("del_thumb") & filters.private)
 async def del_thumb_cmd(c, m: Message):
@@ -246,8 +258,10 @@ async def del_thumb_cmd(c, m: Message):
     else:
         await m.reply_text("আপনার কোনো থাম্বনেইল সেভ করা নেই।")
 
+
 async def upload_progress(current, total, message: Message, start_time):
     await progress_callback(current, total, message, start_time, task="Uploading")
+
 
 async def generate_video_thumbnail(video_path: Path, thumb_path: Path):
     try:
@@ -271,6 +285,7 @@ async def generate_video_thumbnail(video_path: Path, thumb_path: Path):
     except Exception as e:
         print(f"Thumbnail generate error: {e}")
         return False
+
 
 async def process_file_and_upload(c: Client, m: Message, in_path: Path, original_name: str = None):
     uid = m.from_user.id
@@ -321,6 +336,7 @@ async def process_file_and_upload(c: Client, m: Message, in_path: Path, original
     except Exception as e:
         await m.reply_text(f"আপলোডে ত্রুটি: {e}")
 
+
 @app.on_message(filters.command("upload_url") & filters.private)
 async def upload_url_cmd(c, m: Message):
     if len(m.command) < 2:
@@ -356,6 +372,7 @@ async def upload_url_cmd(c, m: Message):
     await status_msg.edit("ডাউনলোড সম্পন্ন, Telegram-এ আপলোড হচ্ছে...")
     await process_file_and_upload(c, m, tmp_in, original_name=safe_name)
 
+
 @app.on_message((filters.video | filters.document) & filters.private)
 async def incoming_file_handler(c, m: Message):
     if m.forward_from or m.forward_from_chat:
@@ -376,6 +393,7 @@ async def incoming_file_handler(c, m: Message):
     await m.download(file_name=str(tmp_in))
     await status_msg.edit("ডাউনলোড সম্পন্ন — Telegram-এ আপলোড হচ্ছে...")
     await process_file_and_upload(c, m, tmp_in, original_name=safe_name)
+
 
 @app.on_message(filters.command("rename") & filters.private)
 async def rename_cmd(c, m: Message):
@@ -414,55 +432,55 @@ async def rename_cmd(c, m: Message):
             progress_args=(status_msg, start_time, "Downloading")
         )
 
+        await status_msg.edit("রিনেম ভিডিও আপলোড শুরু হচ্ছে...")
         duration_sec = get_video_duration(tmp_file)
-
-        await status_msg.edit("রিনেম ভিডিও আপলোড হচ্ছে...")
         await c.send_video(
             chat_id=m.chat.id,
             video=str(tmp_file),
             caption=newname,
             thumb=thumb_path,
             duration=duration_sec,
-            progress=progress_callback,
-            progress_args=(status_msg, start_time, "Uploading")
+            progress=upload_progress,
+            progress_args=(status_msg, start_time)
         )
-        await status_msg.edit("রিনেম সম্পন্ন!")
+        await status_msg.edit("রিনেম ভিডিও আপলোড সম্পন্ন।")
+
         if tmp_file.exists():
-            tmp_file.unlink(missing_ok=True)
+            tmp_file.unlink()
     except Exception as e:
-        await m.reply_text(f"রিনেমের সময় সমস্যা: {e}")
+        await m.reply_text(f"রিনেম ভিডিওতে ত্রুটি: {e}")
+
 
 @app.on_message(filters.command("broadcast") & filters.user(ADMIN_ID))
 async def broadcast_cmd(c, m: Message):
     text = m.text.split(None, 1)
     if len(text) < 2:
-        await m.reply_text("ব্রডকাস্ট করার জন্য /broadcast <message> ব্যবহার করুন।")
+        await m.reply_text("ব্রডকাস্টের জন্য /broadcast <text> ব্যবহার করুন।")
         return
-    bmsg = text[1]
-    await m.reply_text("ব্রডকাস্ট শুরু...")
-    async for dialog in c.iter_dialogs():
+    msg = text[1]
+
+    count = 0
+    async for dialog in c.get_dialogs():
+        chat_id = dialog.chat.id
         try:
-            await c.send_message(dialog.chat.id, bmsg)
+            await c.send_message(chat_id, msg)
+            count += 1
         except Exception:
-            continue
-    await m.reply_text("ব্রডকাস্ট শেষ।")
+            pass
+    await m.reply_text(f"ব্রডকাস্ট সম্পন্ন। মোট পাঠানো: {count} টি চ্যাট।")
 
-@app.on_message(filters.command("restart") & filters.user(ADMIN_ID))
-async def restart_cmd(c, m: Message):
-    await m.reply_text("বট রিস্টার্ট হচ্ছে...")
-    os.execv(sys.executable, ['python'] + sys.argv)
 
-@app.on_message(filters.command("ping") & filters.user(ADMIN_ID))
-async def ping_cmd(c, m: Message):
-    await m.reply_text("pong")
+# FastAPI route example
+@web_app.get("/")
+async def root():
+    return {"status": "Bot is running!"}
+
 
 def start_fastapi():
-    import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(web_app, host="0.0.0.0", port=port)
 
+
 if __name__ == "__main__":
-    # Start FastAPI in a thread and then start pyrogram bot
     threading.Thread(target=start_fastapi).start()
-    print("Starting Pyrogram client...")
     app.run()
