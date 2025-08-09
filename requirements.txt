@@ -1,5 +1,7 @@
 pyrogram
 tgcrypto
 aiohttp
-hachoir
 pillow
+hachoir
+fastapi
+uvicorn[standard]
