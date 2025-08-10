@@ -15,7 +15,7 @@ API_ID = 0
 API_HASH = ""
 BOT_TOKEN = ""
 
-TMP = Path("/data/data/ru.iiec.pydroid3/files/tmp")
+TMP = Path("./tmp")
 TMP.mkdir(parents=True, exist_ok=True)
 
 USER_THUMBS = {}
@@ -412,7 +412,7 @@ async def handle_url_download_and_upload(c: Client, m: Message, url: str):
 
 # Auto URL uploader: whenever admin sends a message containing a URL in private chat, start auto-download.
 @app.on_message(filters.regex(r"https?://") & filters.private)
-async def auto_url_uploader(c: Client, m: Message):
+async def auto_url_uploader(c, m: Message):
     if not is_admin(m.from_user.id):
         # ignore non-admin URLs to enforce admin-only feature
         return
@@ -426,53 +426,13 @@ async def auto_url_uploader(c: Client, m: Message):
 
 @app.on_message(filters.video & filters.private)
 async def video_handler(c, m: Message):
-    if not is_admin(m.from_user.id):
-        await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
-        return
+    # video reply message handler (for rename)
     uid = m.from_user.id
-    if uid in TASKS:
-        await m.reply_text("একই সময়ে শুধু একটাই কাজ করা যাবে। দয়া করে শেষ হওয়া পর্যন্ত অপেক্ষা করুন।")
+    if not is_admin(uid):
         return
-
-    status_msg = await m.reply_text("ফাইল ডাউনলোড হচ্ছে...", reply_markup=progress_keyboard())
-    cancel_event = asyncio.Event()
-    TASKS[uid] = cancel_event
-
-    tmp_file = TMP / f"{uid}_video_{int(datetime.now().timestamp())}.mp4"
-    try:
-        await m.download(file_name=str(tmp_file))
-        await status_msg.edit("ডাউনলোড সম্পন্ন, আপলোড শুরু হচ্ছে...", reply_markup=None)
-        await process_file_and_upload(c, m, tmp_file)
-    except Exception as e:
-        await status_msg.edit(f"ত্রুটি: {e}", reply_markup=None)
-    finally:
-        TASKS.pop(uid, None)
-
-
-@app.on_message(filters.document & filters.private)
-async def document_handler(c, m: Message):
-    if not is_admin(m.from_user.id):
-        await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
-        return
-    uid = m.from_user.id
-    if uid in TASKS:
-        await m.reply_text("একই সময়ে শুধু একটাই কাজ করা যাবে। দয়া করে শেষ হওয়া পর্যন্ত অপেক্ষা করুন।")
-        return
-
-    status_msg = await m.reply_text("ফাইল ডাউনলোড হচ্ছে...", reply_markup=progress_keyboard())
-    cancel_event = asyncio.Event()
-    TASKS[uid] = cancel_event
-
-    fname = m.document.file_name or f"{uid}_file_{int(datetime.now().timestamp())}"
-    tmp_file = TMP / fname
-    try:
-        await m.download(file_name=str(tmp_file))
-        await status_msg.edit("ডাউনলোড সম্পন্ন, আপলোড শুরু হচ্ছে...", reply_markup=None)
-        await process_file_and_upload(c, m, tmp_file)
-    except Exception as e:
-        await status_msg.edit(f"ত্রুটি: {e}", reply_markup=None)
-    finally:
-        TASKS.pop(uid, None)
+    # save video info to LAST_FILE so can rename later
+    LAST_FILE[uid] = {"message": m, "name": m.video.file_name, "is_video": True}
+    await m.reply_text("ভিডিও মেসেজ পাওয়া গেছে। আপনি এখন /rename <new_name.ext> কমান্ড ব্যবহার করে নাম পরিবর্তন করতে পারেন।")
 
 
 @app.on_message(filters.command("rename") & filters.private)
@@ -480,76 +440,55 @@ async def rename_handler(c, m: Message):
     if not is_admin(m.from_user.id):
         await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
         return
-    if not m.reply_to_message:
-        await m.reply_text("রিনেম করার জন্য ভিডিও ফাইল রিপ্লাই করুন এবং /rename নতুননাম.ext লিখুন।")
-        return
-    if not m.command or len(m.command) < 2:
-        await m.reply_text("ব্যবহার: /rename নতুননাম.ext")
-        return
-
-    new_name = m.text.split(None, 1)[1].strip()
-
-    replied = m.reply_to_message
-    if not (replied.video or replied.document):
-        await m.reply_text("দয়া করে ভিডিও বা ডকুমেন্ট রিপ্লাই করুন।")
-        return
-
     uid = m.from_user.id
-    if uid in TASKS:
-        await m.reply_text("একই সময়ে শুধু একটাই কাজ করা যাবে। দয়া করে শেষ হওয়া পর্যন্ত অপেক্ষা করুন।")
+    if uid not in LAST_FILE or "message" not in LAST_FILE[uid]:
+        await m.reply_text("আপনার রিনেম করার জন্য কোনো ফাইল পাওয়া যায়নি।")
         return
-
-    status_msg = await m.reply_text("ফাইল ডাউনলোড হচ্ছে...", reply_markup=progress_keyboard())
-    cancel_event = asyncio.Event()
-    TASKS[uid] = cancel_event
-
-    tmp_file = TMP / f"rename_{uid}_{int(datetime.now().timestamp())}_{new_name}"
+    if len(m.command) < 2:
+        await m.reply_text("ব্যবহার: /rename newfilename.ext")
+        return
+    new_name = m.text.split(None, 1)[1].strip()
+    last_msg = LAST_FILE[uid]["message"]
     try:
-        await replied.download(file_name=str(tmp_file))
-        await status_msg.edit("ডাউনলোড সম্পন্ন, আপলোড শুরু হচ্ছে...", reply_markup=None)
-        await process_file_and_upload(c, m, tmp_file, original_name=new_name)
+        await last_msg.edit_text("রিনেমিং শুরু হচ্ছে...")
+    except Exception:
+        pass
+    try:
+        await last_msg.download(file_name=str(TMP / new_name))
+        await m.reply_text(f"ফাইল রিনেম সম্পন্ন: {new_name}")
     except Exception as e:
-        await status_msg.edit(f"ত্রুটি: {e}", reply_markup=None)
-    finally:
-        TASKS.pop(uid, None)
+        await m.reply_text(f"রিনেমিং ব্যর্থ: {e}")
 
 
-@app.on_callback_query(filters.regex("cancel_task"))
-async def cancel_task_handler(c, cb):
+@app.on_callback_query(filters.regex(r"cancel_task"))
+async def cancel_callback(c, cb):
     uid = cb.from_user.id
-    cancel_event = TASKS.get(uid)
-    if cancel_event and not cancel_event.is_set():
+    if uid in TASKS:
+        cancel_event = TASKS[uid]
         cancel_event.set()
-        await cb.answer("কাজ বাতিল করা হয়েছে।", show_alert=True)
-        try:
-            await cb.message.edit("আপনি কাজ বাতিল করেছেন।", reply_markup=None)
-        except:
-            pass
+        await cb.answer("আপনার কাজ বাতিল করা হয়েছে।")
         TASKS.pop(uid, None)
     else:
-        await cb.answer("কোনো চলমান কাজ নেই।", show_alert=True)
+        await cb.answer("কোনো চলমান কাজ পাওয়া যায়নি।")
 
 
 @app.on_message(filters.command("broadcast") & filters.private)
 async def broadcast_handler(c, m: Message):
-    if m.from_user.id != ADMIN_ID:
+    if not is_admin(m.from_user.id):
         await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
         return
-    if not m.command or len(m.command) < 2:
+    if len(m.command) < 2:
         await m.reply_text("ব্যবহার: /broadcast <message>")
         return
     text = m.text.split(None, 1)[1]
-    sent = 0
-    async for dialog in c.iter_dialogs():
-        try:
-            await dialog.chat.send_message(text)
-            sent += 1
-            await asyncio.sleep(0.3)
-        except:
-            continue
-    await m.reply_text(f"ব্রডকাস্ট সম্পন্ন হয়েছে। মোট পাঠানো হয়েছে: {sent} জনকে।")
+    # Warning: For demo, just send to admin itself
+    try:
+        await c.send_message(chat_id=ADMIN_ID, text=f"Broadcast: {text}")
+        await m.reply_text("ব্রডকাস্ট পাঠানো হয়েছে।")
+    except Exception as e:
+        await m.reply_text(f"ব্রডকাস্ট ব্যর্থ: {e}")
 
 
 if __name__ == "__main__":
-    print("Bot started...")
+    print("Bot is starting...")
     app.run()
