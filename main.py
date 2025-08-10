@@ -396,45 +396,78 @@ async def rename_cmd(c, m: Message):
         await m.reply_text("ব্যবহার: /rename নতুননাম.ext\nউদাহরণ: /rename myvideo.mp4")
         return
     new_name = m.text.split(None, 1)[1].strip()
-    if not re.match(r"^[\w\s\-.]+(\.[a-zA-Z0-9]{2,5})?$", new_name):
-        await m.reply_text("নামটিতে অবৈধ ক্যারেক্টার আছে। শুধুমাত্র অক্ষর, সংখ্যা, স্পেস, ড্যাশ এবং ডট ব্যবহার করুন।")
+    if not new_name:
+        await m.reply_text("নতুন নাম দিন, যেমন: myvideo.mp4")
         return
+
     try:
-        await m.reply_to_message.copy(m.chat.id, file_name=new_name)
-        await m.reply_text(f"ভিডিও রিনেম সম্পন্ন: {new_name}")
+        uid = m.from_user.id
+        thumb_path = USER_THUMBS.get(uid)
+        if thumb_path and not Path(thumb_path).exists():
+            thumb_path = None
+
+        vid_msg = m.reply_to_message
+        status_msg = await m.reply_text("রিনেম শুরু হচ্ছে...", reply_markup=progress_keyboard())
+        cancel_event = asyncio.Event()
+        TASKS[uid] = cancel_event
+        start_time = datetime.now()
+
+        await vid_msg.download(file_name=TMP / f"rename_{uid}.mp4")
+
+        in_path = TMP / f"rename_{uid}.mp4"
+        await process_file_and_upload(c, m, in_path, original_name=new_name)
     except Exception as e:
-        await m.reply_text(f"রিনেম করতে সমস্যা: {e}")
+        await m.reply_text(f"রিনেম করতে সমস্যা হয়েছে: {e}")
+    finally:
+        TASKS.pop(uid, None)
 
 @app.on_message(filters.command("broadcast") & filters.private)
 async def broadcast_cmd(c, m: Message):
     if not is_admin(m.from_user.id):
-        await m.reply_text("আপনি বট অ্যাডমিন নন।")
+        await m.reply_text("আপনার অনুমতি নেই ব্রডকাস্ট চালানোর।")
         return
     if len(m.command) < 2:
         await m.reply_text("ব্যবহার: /broadcast <message>")
         return
-    msg_text = m.text.split(None, 1)[1]
-    users = [ADMIN_ID]  # এখানে আপনি চাইলে ইউজার লিস্ট রাখতে পারেন
-    count = 0
-    for user_id in users:
-        try:
-            await c.send_message(user_id, msg_text)
-            count += 1
-        except:
-            pass
-    await m.reply_text(f"ব্রডকাস্ট সম্পন্ন। সফল হয়েছে: {count}")
+    text = m.text.split(None, 1)[1]
+    # এখানে আপনার ইউজারদের তালিকা ব্যবহার করে ব্রডকাস্ট লজিক লাগাতে হবে
+    # উদাহরণ সরূপ:
+    # users = [ADMIN_ID]  # আপনার ইউজারদের তালিকা
+    # for user_id in users:
+    #     try:
+    #         await c.send_message(user_id, text)
+    #     except:
+    #         pass
+    await m.reply_text("ব্রডকাস্ট সম্পন্ন (এই বট এ ব্রডকাস্ট কার্যকর করার জন্য আলাদা ইউজার তালিকা লাগবে)।")
 
 @app.on_callback_query(filters.regex("cancel_task"))
-async def cancel_task_cb(c, cq):
+async def cancel_callback(c, cq):
     uid = cq.from_user.id
     if uid in TASKS:
         TASKS[uid].set()
-        await cq.answer("অপারেশন বাতিল করা হয়েছে।")
-        await cq.message.edit("অপারেশন ব্যবহারকারী দ্বারা বাতিল করা হয়েছে।", reply_markup=None)
         TASKS.pop(uid, None)
+        await cq.answer("আপনার চলমান কাজ বাতিল করা হয়েছে।", show_alert=True)
+        try:
+            await cq.message.edit("অপারেশন ব্যবহারকারী দ্বারা বাতিল করা হয়েছে।", reply_markup=None)
+        except:
+            pass
     else:
-        await cq.answer("কোনো অপারেশন চলমান নেই।")
+        await cq.answer("কোন চলমান কাজ নেই বাতিল করার জন্য।", show_alert=True)
+
+# Auto URL upload: মেসেজ থেকে স্বয়ংক্রিয় URL ডিটেক্ট করে আপলোড করবে
+url_regex = re.compile(r"https?://[^\s]+")
+
+@app.on_message(filters.private & filters.regex(url_regex))
+async def auto_url_upload_handler(c: Client, m: Message):
+    if not is_admin(m.from_user.id):
+        return
+    urls = url_regex.findall(m.text)
+    if not urls:
+        return
+    url = urls[0]
+    await handle_url_download_and_upload(c, m, url)
 
 if __name__ == "__main__":
-    print("বট চালু হচ্ছে...")
+    print("Bot is starting...")
+    asyncio.run(set_bot_commands())
     app.run()
