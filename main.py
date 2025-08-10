@@ -10,18 +10,19 @@ from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
 import subprocess
 import traceback
+import os
 
-API_ID = 0
-API_HASH = ""
-BOT_TOKEN = ""
+API_ID = int(os.getenv("API_ID", "26682163"))
+API_HASH = os.getenv("API_HASH", "a8f99ba7a23a64b6512aed95fb8a5885")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8410395478:AAHpzWKItO5-RegWPrb-yi019Re0vQNQqQ8")
 
-TMP = Path("./tmp")
+TMP = Path("tmp")
 TMP.mkdir(parents=True, exist_ok=True)
 
 USER_THUMBS = {}
 LAST_FILE = {}
 TASKS = {}
-ADMIN_ID = 0
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6473423613"))
 MAX_SIZE = 2 * 1024 * 1024 * 1024  # 2GB max size
 
 app = Client("mybot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -76,10 +77,7 @@ async def progress_callback(current, total, message: Message, start_time, task="
         eta = int((total - current) / (current / diff)) if current and diff else 0
 
         done_blocks = int(percentage // 5)
-        if done_blocks < 0:
-            done_blocks = 0
-        if done_blocks > 20:
-            done_blocks = 20
+        done_blocks = max(0, min(done_blocks, 20))
         progress_bar = ("█" * done_blocks).ljust(20, "░")
         text = (
             f"{task}...\n"
@@ -143,11 +141,9 @@ async def download_drive_file(file_id: str, out_path: Path, message: Message = N
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as sess:
             async with sess.get(base, allow_redirects=True) as resp:
                 text = await resp.text(errors="ignore")
-                # direct download available
                 if "content-disposition" in (k.lower() for k in resp.headers.keys()):
                     async with sess.get(base) as r2:
                         return await download_stream(r2, out_path, message, datetime.now(), task="Downloading", cancel_event=cancel_event)
-                # confirmation token (large file)
                 m = re.search(r"confirm=([0-9A-Za-z_-]+)", text)
                 if m:
                     token = m.group(1)
@@ -211,7 +207,6 @@ async def setthumb_prompt(c, m):
 
 @app.on_message(filters.photo & filters.private)
 async def photo_handler(c, m: Message):
-    # only admin can set thumb
     if not is_admin(m.from_user.id):
         return
     uid = m.from_user.id
@@ -368,7 +363,6 @@ async def handle_url_download_and_upload(c: Client, m: Message, url: str):
 
         video_exts = {".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm"}
         if not any(safe_name.lower().endswith(ext) for ext in video_exts):
-            # if extension unknown, default to .mp4 (you can change behavior)
             safe_name += ".mp4"
 
         tmp_in = TMP / f"dl_{uid}_{int(datetime.now().timestamp())}_{safe_name}"
@@ -400,7 +394,6 @@ async def handle_url_download_and_upload(c: Client, m: Message, url: str):
         await status_msg.edit(f"অপস! কিছু ভুল হয়েছে: {e}", reply_markup=None)
         TASKS.pop(uid, None)
     finally:
-        # try to cleanup if file remains and not stored in LAST_FILE
         try:
             if uid not in LAST_FILE:
                 if tmp_in and tmp_in.exists():
@@ -410,85 +403,89 @@ async def handle_url_download_and_upload(c: Client, m: Message, url: str):
         TASKS.pop(uid, None)
 
 
-# Auto URL uploader: whenever admin sends a message containing a URL in private chat, start auto-download.
 @app.on_message(filters.regex(r"https?://") & filters.private)
-async def auto_url_uploader(c, m: Message):
+async def auto_url_download(c: Client, m: Message):
     if not is_admin(m.from_user.id):
-        # ignore non-admin URLs to enforce admin-only feature
         return
-    # take first URL
-    urls = re.findall(r"(https?://[^\s]+)", m.text)
+    urls = re.findall(r"https?://\S+", m.text)
     if not urls:
         return
-    url = urls[0].strip()
+    url = urls[0]
     await handle_url_download_and_upload(c, m, url)
 
 
-@app.on_message(filters.video & filters.private)
-async def video_handler(c, m: Message):
-    # video reply message handler (for rename)
-    uid = m.from_user.id
-    if not is_admin(uid):
-        return
-    # save video info to LAST_FILE so can rename later
-    LAST_FILE[uid] = {"message": m, "name": m.video.file_name, "is_video": True}
-    await m.reply_text("ভিডিও মেসেজ পাওয়া গেছে। আপনি এখন /rename <new_name.ext> কমান্ড ব্যবহার করে নাম পরিবর্তন করতে পারেন।")
-
-
 @app.on_message(filters.command("rename") & filters.private)
-async def rename_handler(c, m: Message):
+async def rename_cmd(c: Client, m: Message):
     if not is_admin(m.from_user.id):
         await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
         return
-    uid = m.from_user.id
-    if uid not in LAST_FILE or "message" not in LAST_FILE[uid]:
-        await m.reply_text("আপনার রিনেম করার জন্য কোনো ফাইল পাওয়া যায়নি।")
+    if not m.reply_to_message:
+        await m.reply_text("রিনেম করার জন্য ভিডিও বা ডকুমেন্টে reply করুন।")
         return
     if len(m.command) < 2:
-        await m.reply_text("ব্যবহার: /rename newfilename.ext")
+        await m.reply_text("ব্যবহার: /rename <নতুন_নাম.ext>")
         return
     new_name = m.text.split(None, 1)[1].strip()
-    last_msg = LAST_FILE[uid]["message"]
-    try:
-        await last_msg.edit_text("রিনেমিং শুরু হচ্ছে...")
-    except Exception:
-        pass
-    try:
-        await last_msg.download(file_name=str(TMP / new_name))
-        await m.reply_text(f"ফাইল রিনেম সম্পন্ন: {new_name}")
-    except Exception as e:
-        await m.reply_text(f"রিনেমিং ব্যর্থ: {e}")
+    if not new_name or any(ch in new_name for ch in r'\/:*?"<>|'):
+        await m.reply_text("নতুন নাম সঠিক নয়। বিশেষ ক্যারেক্টার ব্যবহার করবেন না।")
+        return
 
-
-@app.on_callback_query(filters.regex(r"cancel_task"))
-async def cancel_callback(c, cb):
-    uid = cb.from_user.id
-    if uid in TASKS:
-        cancel_event = TASKS[uid]
-        cancel_event.set()
-        await cb.answer("আপনার কাজ বাতিল করা হয়েছে।")
-        TASKS.pop(uid, None)
+    replied = m.reply_to_message
+    if replied.video or replied.document:
+        if replied.video:
+            media = replied.video
+        else:
+            media = replied.document
+        await m.reply_text("রিনেম করার জন্য ফাইল ডাউনলোড হচ্ছে...")
+        try:
+            file_path = await replied.download()
+            new_path = Path(file_path).parent / new_name
+            Path(file_path).rename(new_path)
+            await m.reply_text("ফাইল রিনেম হয়েছে। Telegram-এ আপলোড হচ্ছে...")
+            await process_file_and_upload(c, m, new_path, original_name=new_name)
+            try:
+                new_path.unlink()
+            except:
+                pass
+        except Exception as e:
+            await m.reply_text(f"ত্রুটি: {e}")
     else:
-        await cb.answer("কোনো চলমান কাজ পাওয়া যায়নি।")
+        await m.reply_text("দুঃখিত, শুধুমাত্র ভিডিও বা ডকুমেন্ট রিনেম করতে পারবেন।")
+
+
+@app.on_callback_query(filters.regex("cancel_task"))
+async def cancel_task_callback(c, cq):
+    uid = cq.from_user.id
+    if uid in TASKS:
+        cancel_event = TASKS.get(uid)
+        if cancel_event:
+            cancel_event.set()
+            TASKS.pop(uid, None)
+            await cq.message.edit("কার্য বাতিল করা হয়েছে।")
+        else:
+            await cq.message.edit("বাতিল করার কাজ পাওয়া যায়নি।")
+    else:
+        await cq.message.edit("আপনার কোনো চলমান কাজ নেই।")
 
 
 @app.on_message(filters.command("broadcast") & filters.private)
-async def broadcast_handler(c, m: Message):
+async def broadcast_cmd(c, m: Message):
     if not is_admin(m.from_user.id):
         await m.reply_text("আপনার অনুমতি নেই এই কমান্ড চালানোর।")
         return
     if len(m.command) < 2:
-        await m.reply_text("ব্যবহার: /broadcast <message>")
+        await m.reply_text("ব্যবহার: /broadcast <মেসেজ>")
         return
-    text = m.text.split(None, 1)[1]
-    # Warning: For demo, just send to admin itself
-    try:
-        await c.send_message(chat_id=ADMIN_ID, text=f"Broadcast: {text}")
-        await m.reply_text("ব্রডকাস্ট পাঠানো হয়েছে।")
-    except Exception as e:
-        await m.reply_text(f"ব্রডকাস্ট ব্যর্থ: {e}")
+    text = m.text.split(None, 1)[1].strip()
+    users = [ADMIN_ID]  # এখানে তোমার ইউজার লিস্ট বা ডাটাবেস থেকে ইউজার সংগ্রহ করতে পারো
+    for user_id in users:
+        try:
+            await c.send_message(user_id, text)
+        except Exception:
+            pass
+    await m.reply_text("ব্রডকাস্ট সম্পন্ন হয়েছে।")
 
 
 if __name__ == "__main__":
-    print("Bot is starting...")
+    print("Bot চালু হচ্ছে...")
     app.run()
