@@ -1,6 +1,4 @@
 import os
-
-bot_code = '''\
 import re
 import aiohttp
 import asyncio
@@ -440,22 +438,3 @@ async def cancel_task_cb(c, cq):
 if __name__ == "__main__":
     print("বট চালু হচ্ছে...")
     app.run()
-'''
-
-requirements_txt = '''\
-pyrogram==2.0.54
-tgcrypto==1.2.4
-aiohttp==3.8.1
-hachoir==3.1.3
-Pillow==9.3.0
-'''
-
-readme_md = '''\
-# URL Uploader Telegram Bot
-
-এই বট URL থেকে ফাইল ডাউনলোড করে Telegram এ আপলোড করে।
-
-## সেটআপ
-
-1. Python 3.9+ ইন্সটল করুন
-2. প্যাকেজগুলো ইন্সটল করুন:
