@@ -30,7 +30,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 if API_ID == 0 or not API_HASH or not BOT_TOKEN or ADMIN_ID == 0:
     logging.warning("One or more required environment variables are missing: API_ID, API_HASH, BOT_TOKEN, ADMIN_ID")
 
-MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", 50 * 1024 * 1024))  # default 2GB
+MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", 9048 * 1024 * 1024))  # default 2GB
 
 # -------------------------
 # Logging tweaks
