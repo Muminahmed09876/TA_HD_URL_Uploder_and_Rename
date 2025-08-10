@@ -12,9 +12,9 @@ import subprocess
 import traceback
 import os
 
-API_ID = int(os.getenv("API_ID", "26682163"))
-API_HASH = os.getenv("API_HASH", "a8f99ba7a23a64b6512aed95fb8a5885")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8410395478:AAHpzWKItO5-RegWPrb-yi019Re0vQNQqQ8")
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 TMP = Path("tmp")
 TMP.mkdir(parents=True, exist_ok=True)
@@ -22,7 +22,7 @@ TMP.mkdir(parents=True, exist_ok=True)
 USER_THUMBS = {}
 LAST_FILE = {}
 TASKS = {}
-ADMIN_ID = int(os.getenv("ADMIN_ID", "6473423613"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 MAX_SIZE = 2 * 1024 * 1024 * 1024  # 2GB max size
 
 app = Client("mybot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
